@@ -65,6 +65,9 @@ def tilføj_forløb(borger: dict, regel: dict):
     
 
 def tilføj_opgaver(regel: dict, data: dict):
+    if regel.get("Opgavetype") is None:
+        return
+
     reference = data.get("_links").get("referencedObject").get("href")
     medcom_besked = nexus.nexus_client.get(endpoint=reference).json()
     opgaver_på_besked = nexus.opgaver.hent_opgaver(medcom_besked)
@@ -105,8 +108,7 @@ async def process_workqueue(workqueue: Workqueue):
 
     for item in workqueue:
         with item:
-            data = item.data  # Item data deserialized from json as dict
-            tilføj_opgaver(regler[0], data)
+            data = item.data  # Item data deserialized from json as dict            
             cpr = data.get("patients")[0].get("patientIdentifier").get("identifier")
             cpr = sanitize_cpr(cpr=cpr)
             borger = nexus.borgere.hent_borger(borger_cpr=cpr)
