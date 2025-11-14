@@ -11,6 +11,7 @@ from kmd_nexus_client.utils import (
     sanitize_cpr
 )
 from odk_tools.tracking import Tracker
+from odk_tools.reporting import report
 from process.config import load_excel_mapping, get_excel_mapping
 
 nexus: NexusClientManager
@@ -19,15 +20,15 @@ tracker: Tracker
 proces_navn = "Postmester Medcom"
 
 def match_regel(regel: dict, data: dict) -> bool:        
-    if regel.get("Emne") and str(data.get("Emne", "")).lower() == str(regel["Emne"]).lower():
+    if regel.get("Emne") and str(data.get("name", "")).lower() == str(regel["Emne"]).lower():
         return True
-    if regel.get("Wildcard søgning i emnefelt") and str(data.get("Emne", "")).lower().startswith(str(regel["Emne"]).lower()):
+    if regel.get("Wildcard søgning i emnefelt") == "Ja" and str(data.get("name", "")).lower().startswith(str(regel["Emne"]).lower()):
         return True
 
     return False
 
 def tilføj_organisationer(borger: dict, regel: dict, data: dict):
-    if any(obj["name"] == regel.get("Organisation") and obj["effectiveEndDate"] is None for obj in data["patientOrganizations"]):
+    if any(obj["organization"]["name"] == regel.get("Organisation") and obj["effectiveEndDate"] is None for obj in data["patientOrganizations"]):
         return
     
     organisation = nexus.organisationer.hent_organisation_ved_navn(
@@ -42,9 +43,18 @@ def tilføj_organisationer(borger: dict, regel: dict, data: dict):
         organisation=organisation
     )
 
-    # Udfyld handlingslog
+    report(
+        report_id="postmester_medcom",
+        group="Udført af TYRA",
+        json={
+            "cpr": borger.get("patientIdentifier").get("identifier"),
+            "emne": data.get("name", ""),
+            "handling": f"Tilføjet organisation: {regel.get('Organisation')}"
+        }
+    )    
 
-def tilføj_forløb(borger: dict, regel: dict):
+def tilføj_forløb(borger: dict, regel: dict, data: dict):
+    borgers_forløb = nexus.borgere.hent_aktive_forløb(borger=borger)
     linjer = regel.get("Forløb")
 
     if linjer is None:
@@ -57,14 +67,41 @@ def tilføj_forløb(borger: dict, regel: dict):
             parts = linje.split("/", 1)
             grundforløb = parts[0].strip()
             forløb = parts[1].strip()
-            
+
+            # Check if grundforløb and forløb already exist in borgers_forløb
+            if any(f["name"] == grundforløb for f in borgers_forløb) and any(f["name"] == forløb for f in borgers_forløb):
+                continue
+
             nexus.forløb.opret_forløb(borger=borger, grundforløb_navn=grundforløb, forløb_navn=forløb)
+
+            report(
+                report_id="postmester_medcom",
+                group="Udført af TYRA",
+                json={
+                    "cpr": borger.get("patientIdentifier").get("identifier"),
+                    "emne": data.get("name", ""),
+                    "handling": f"Tilføjet grundforløb: {grundforløb} og forløb: {forløb}"
+                }
+            )
         else:            
             grundforløb = linje.strip()
+
+            if any(f["name"] == grundforløb for f in borgers_forløb):
+                continue
+
             nexus.forløb.opret_forløb(borger=borger, grundforløb_navn=grundforløb)
     
+            report(
+                report_id="postmester_medcom",
+                group="Udført af TYRA",
+                json={
+                    "cpr": borger.get("patientIdentifier").get("identifier"),
+                    "emne": data.get("name", ""),
+                    "handling": f"Tilføjet grundforløb: {grundforløb}"
+                }
+            )
 
-def tilføj_opgaver(regel: dict, data: dict):
+def tilføj_opgaver(borger: dict, regel: dict, data: dict):
     if regel.get("Opgavetype") is None:
         return
 
@@ -73,7 +110,7 @@ def tilføj_opgaver(regel: dict, data: dict):
     opgaver_på_besked = nexus.opgaver.hent_opgaver(medcom_besked)
 
     for opgave in opgaver_på_besked:
-        if (opgave["type"]["name"] == regel.get("Type") and opgave["organizationAssignee"]["displayName"].lower() == str(regel.get("Organisation")).lower()):
+        if (opgave["type"]["name"] == regel.get("Opgavetype") and opgave["organizationAssignee"]["displayName"].lower() == str(regel.get("Organisation")).lower()):
             return
 
     nexus.opgaver.opret_opgave(
@@ -83,6 +120,16 @@ def tilføj_opgaver(regel: dict, data: dict):
         ansvarlig_organisation=str(regel.get("Organisation")),
         start_dato=datetime.now().date(),
         forfald_dato=datetime.now().date() + timedelta(days=1)
+    )
+
+    report(
+        report_id="postmester_medcom",
+        group="Udført af TYRA",
+        json={
+            "cpr": borger.get("patientIdentifier").get("identifier"),
+            "emne": data.get("name", ""),
+            "handling": f"Tilføjet opgave på besked med emne: {data.get('name', '')} til person: {borger.get("patientIdentifier").get("identifier")}"
+        }
     )
 
 async def populate_queue(workqueue: Workqueue):
@@ -118,11 +165,10 @@ async def process_workqueue(workqueue: Workqueue):
  
             try:
                 for regel in regler:
-                    if match_regel(regel, data):
-                        pass
+                    if match_regel(regel, data):                        
                         tilføj_organisationer(borger, regel, data)
-                        tilføj_forløb(borger, regel)
-                        tilføj_opgaver(regel, data)
+                        tilføj_forløb(borger, regel, data)
+                        tilføj_opgaver(borger, regel, data)
                         tracker.track_task(process_name=proces_navn)
 
             except WorkItemError as e:
