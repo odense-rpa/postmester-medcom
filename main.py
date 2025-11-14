@@ -159,6 +159,7 @@ async def process_workqueue(workqueue: Workqueue):
             cpr = data.get("patients")[0].get("patientIdentifier").get("identifier")
             cpr = sanitize_cpr(cpr=cpr)
             borger = nexus.borgere.hent_borger(borger_cpr=cpr)
+            udført_arbejde = False
 
             if borger is None:
                 continue
@@ -170,6 +171,10 @@ async def process_workqueue(workqueue: Workqueue):
                         tilføj_forløb(borger, regel, data)
                         tilføj_opgaver(borger, regel, data)
                         tracker.track_task(process_name=proces_navn)
+                        udført_arbejde = True
+
+                if not udført_arbejde:
+                    tracker.track_partial_task(process_name=proces_navn)
 
             except WorkItemError as e:
                 # A WorkItemError represents a soft error that indicates the item should be passed to manual processing or a business logic fault
