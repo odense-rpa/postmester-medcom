@@ -137,7 +137,7 @@ async def populate_queue(workqueue: Workqueue):
         navn="MedCom - Korrespondancer: venter + accepterede", 
         organisation=None,
         medarbejder=None,
-        antal_sider=10
+        antal_sider=50
     )
 
     if aktivitetsliste:
