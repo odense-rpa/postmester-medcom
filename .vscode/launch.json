@@ -11,7 +11,8 @@
             "program": "main.py",
             "console": "integratedTerminal",
             "args": [
-            ]
+            ],
+            "justMyCode": false
         },
         {
             "name": "main.py --queue",
@@ -21,7 +22,8 @@
             "console": "integratedTerminal",
             "args": [
                 "--queue"
-            ]
+            ],
+            "justMyCode": false
         }
     ]
 }
